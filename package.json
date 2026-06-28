@@ -1,0 +1,10 @@
+{
+  "name": "daily-logs-monorepo",
+  "version": "1.0.0",
+  "description": "DailyLogs monorepo workspace containing frontend and backend",
+  "private": true,
+  "scripts": {
+    "start": "./start.sh",
+    "stop": "./stop.sh"
+  }
+}
