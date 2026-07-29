@@ -5,6 +5,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import axios from 'axios';
 import { Task } from './task.schema';
+import { Profile } from '../profile/profile.schema';
 
 interface JiraCommentAuthor {
   displayName: string;
@@ -65,6 +66,7 @@ export class SyncService {
   constructor(
     private configService: ConfigService,
     @InjectModel(Task.name) private taskModel: Model<Task>,
+    @InjectModel(Profile.name) private profileModel: Model<Profile>,
   ) {}
 
   @Cron('*/30 * * * * *')
@@ -77,12 +79,15 @@ export class SyncService {
   }
 
   private async fetchJiraTickets() {
-    const host = this.configService.get<string>('JIRA_HOST');
-    const email = this.configService.get<string>('JIRA_EMAIL');
-    const token = this.configService.get<string>('JIRA_API_TOKEN');
+    const profile = await this.profileModel.findOne();
+    if (!profile || !profile.jiraConnected || !profile.jiraHost || (!profile.jiraApiToken && !profile.jiraOAuthToken)) {
+      this.logger.log('Jira sync skipped: Credentials not configured in user profile.');
+      return;
+    }
 
-    if (!host || !email || !token) return;
-
+    const host = profile.jiraHost;
+    const email = profile.jiraEmail;
+    const token = profile.jiraApiToken || profile.jiraOAuthToken;
     const authHeader = Buffer.from(`${email}:${token}`).toString('base64');
 
     // Calculate Monday of this week at midnight
@@ -160,11 +165,16 @@ export class SyncService {
   }
 
   private async fetchGitLabCommits() {
-    const projectId = this.configService.get<string>('GITLAB_PROJECT_ID');
-    const token = this.configService.get<string>('GITLAB_TOKEN');
-    const authorEmail = this.configService.get<string>('MY_WORK_EMAIL');
+    const profile = await this.profileModel.findOne();
+    if (!profile || !profile.gitlabConnected || !profile.gitlabProjectId || !profile.gitlabToken) {
+      this.logger.log('GitLab sync skipped: Credentials/profile not configured in user profile.');
+      return;
+    }
 
-    if (!projectId || !token || !authorEmail) return;
+    const projectId = profile.gitlabProjectId;
+    const token = profile.gitlabToken;
+    const authorEmail = profile.workEmail || '';
+    const host = profile.gitlabHost || 'git.kiebot.com';
 
     // Calculate Monday of this week at midnight
     const now = new Date();
@@ -173,16 +183,16 @@ export class SyncService {
     const monday = new Date(now.setDate(now.getDate() - distanceToMonday));
     monday.setHours(0, 0, 0, 0); // Reset to exact beginning of the day
 
-    const host = this.configService.get<string>('GITLAB_HOST') || 'gitlab.com';
     const url = `https://${host}/api/v4/projects/${projectId}/repository/commits?since=${monday.toISOString()}&all=true`;
+    const headers = token.startsWith('glpat-')
+      ? { 'PRIVATE-TOKEN': token }
+      : { Authorization: `Bearer ${token}` };
 
     try {
-      const response = await axios.get<GitLabCommit[]>(url, {
-        headers: { 'PRIVATE-TOKEN': token },
-      });
-      const myCommits = response.data.filter(
-        (c) => c.author_email === authorEmail,
-      );
+      const response = await axios.get<GitLabCommit[]>(url, { headers });
+      const myCommits = authorEmail
+        ? response.data.filter((c) => c.author_email?.toLowerCase() === authorEmail.toLowerCase())
+        : response.data;
 
       for (const commit of myCommits) {
         const message = commit.message.trim();
@@ -235,12 +245,16 @@ export class SyncService {
   }
 
   private async fetchGitLabMergeRequests() {
-    const host = this.configService.get<string>('GITLAB_HOST') || 'gitlab.com';
-    const projectId = this.configService.get<string>('GITLAB_PROJECT_ID');
-    const token = this.configService.get<string>('GITLAB_TOKEN');
-    const authorEmail = this.configService.get<string>('MY_WORK_EMAIL');
+    const profile = await this.profileModel.findOne();
+    if (!profile || !profile.gitlabConnected || !profile.gitlabProjectId || !profile.gitlabToken) {
+      return;
+    }
 
-    if (!projectId || !token || !authorEmail) return;
+    const host = profile.gitlabHost || 'git.kiebot.com';
+    const projectId = profile.gitlabProjectId;
+    const token = profile.gitlabToken;
+    const authorEmail = profile.workEmail || '';
+    const gitlabUsername = profile.gitlabUsername || '';
 
     // Calculate Monday of this week at midnight
     const now = new Date();
@@ -250,21 +264,22 @@ export class SyncService {
     monday.setHours(0, 0, 0, 0);
 
     const url = `https://${host}/api/v4/projects/${projectId}/merge_requests?created_after=${monday.toISOString()}`;
+    const headers = token.startsWith('glpat-')
+      ? { 'PRIVATE-TOKEN': token }
+      : { Authorization: `Bearer ${token}` };
 
     try {
-      const response = await axios.get<GitLabMergeRequest[]>(url, {
-        headers: { 'PRIVATE-TOKEN': token },
-      });
+      const response = await axios.get<GitLabMergeRequest[]>(url, { headers });
 
-      const emailPrefix = authorEmail.split('@')[0].toLowerCase();
+      const emailPrefix = authorEmail ? authorEmail.split('@')[0].toLowerCase() : '';
       const myMergeRequests = response.data.filter((mr) => {
         const username = mr.author?.username?.toLowerCase() || '';
         const name = mr.author?.name?.toLowerCase() || '';
         const publicEmail = mr.author?.public_email?.toLowerCase() || '';
         return (
-          username.includes(emailPrefix) ||
-          name.includes(emailPrefix) ||
-          publicEmail === authorEmail.toLowerCase()
+          (gitlabUsername && username === gitlabUsername.toLowerCase()) ||
+          (emailPrefix && (username.includes(emailPrefix) || name.includes(emailPrefix))) ||
+          (authorEmail && publicEmail === authorEmail.toLowerCase())
         );
       });
 

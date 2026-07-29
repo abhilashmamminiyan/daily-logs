@@ -7,6 +7,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { SyncModule } from './sync/sync.module';
 import { TasksModule } from './tasks/tasks.module';
+import { ProfileModule } from './profile/profile.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { TasksModule } from './tasks/tasks.module';
       inject: [ConfigService],
     }),
     ScheduleModule.forRoot(),
+    ProfileModule,
     SyncModule,
     TasksModule,
   ],

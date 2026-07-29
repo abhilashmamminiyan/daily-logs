@@ -3,6 +3,7 @@ import { SyncService } from './sync.service';
 import { ConfigService } from '@nestjs/config';
 import { getModelToken } from '@nestjs/mongoose';
 import { Task } from './task.schema';
+import { Profile } from '../profile/profile.schema';
 
 describe('SyncService', () => {
   let service: SyncService;
@@ -14,22 +15,29 @@ describe('SyncService', () => {
         {
           provide: ConfigService,
           useValue: {
-            get: jest.fn().mockImplementation((key: string) => {
-              if (key === 'JIRA_HOST') return 'test-jira.atlassian.net';
-              if (key === 'JIRA_EMAIL') return 'test@example.com';
-              if (key === 'JIRA_API_TOKEN') return 'test-token';
-              if (key === 'GITLAB_HOST') return 'git.kiebot.com';
-              if (key === 'GITLAB_PROJECT_ID') return '12345';
-              if (key === 'GITLAB_TOKEN') return 'gitlab-token';
-              if (key === 'MY_WORK_EMAIL') return 'test@example.com';
-              return null;
-            }),
+            get: jest.fn().mockImplementation((key: string) => null),
           },
         },
         {
           provide: getModelToken(Task.name),
           useValue: {
             updateOne: jest.fn(),
+          },
+        },
+        {
+          provide: getModelToken(Profile.name),
+          useValue: {
+            findOne: jest.fn().mockResolvedValue({
+              jiraConnected: true,
+              jiraHost: 'test.atlassian.net',
+              jiraEmail: 'test@example.com',
+              jiraApiToken: 'token',
+              gitlabConnected: true,
+              gitlabHost: 'git.kiebot.com',
+              gitlabProjectId: '123',
+              gitlabToken: 'token',
+              workEmail: 'test@example.com',
+            }),
           },
         },
       ],

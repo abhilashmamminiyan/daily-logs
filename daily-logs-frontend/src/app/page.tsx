@@ -21,7 +21,17 @@ import {
   ChevronRight,
   Layers,
   Sparkles,
-  Info
+  Info,
+  User,
+  Key,
+  ShieldCheck,
+  Link as LinkIcon,
+  Unlink,
+  Eye,
+  EyeOff,
+  Globe,
+  Lock,
+  Settings
 } from 'lucide-react';
 
 interface CommitInfo {
@@ -64,6 +74,21 @@ interface ActivityItem {
   url?: string;
 }
 
+interface ProfileData {
+  workEmail: string;
+  jiraHost: string;
+  jiraEmail: string;
+  jiraApiToken: string;
+  jiraConnected: boolean;
+  gitlabHost: string;
+  gitlabProjectId: string;
+  gitlabToken: string;
+  gitlabUsername: string;
+  gitlabConnected: boolean;
+  hasJiraToken: boolean;
+  hasGitLabToken: boolean;
+}
+
 export default function Dashboard() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [standupText, setStandupText] = useState<string>('Loading standup update blocks...');
@@ -87,6 +112,175 @@ export default function Dashboard() {
 
   // Selected Task State (for split-pane detail view)
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+
+  // Profile & Integrations State
+  const [profile, setProfile] = useState<ProfileData>({
+    workEmail: '',
+    jiraHost: '',
+    jiraEmail: '',
+    jiraApiToken: '',
+    jiraConnected: false,
+    gitlabHost: 'git.kiebot.com',
+    gitlabProjectId: '',
+    gitlabToken: '',
+    gitlabUsername: '',
+    gitlabConnected: false,
+    hasJiraToken: false,
+    hasGitLabToken: false,
+  });
+  const [profileLoading, setProfileLoading] = useState<boolean>(false);
+  const [showJiraToken, setShowJiraToken] = useState<boolean>(false);
+  const [jiraTesting, setJiraTesting] = useState<boolean>(false);
+  const [jiraTestMessage, setJiraTestMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [jiraSaving, setJiraSaving] = useState<boolean>(false);
+  const [gitlabSaving, setGitLabSaving] = useState<boolean>(false);
+  const [profileMessage, setProfileMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const fetchProfileData = async () => {
+    setProfileLoading(true);
+    try {
+      const res = await fetch('/api/profile');
+      if (res.ok) {
+        const data = await res.json();
+        setProfile(data);
+      }
+    } catch (e) {
+      console.error('Failed to load user profile:', e);
+    } finally {
+      setProfileLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchProfileData();
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('gitlab_connected') === 'true') {
+        setActiveTab('profile');
+        setProfileMessage({ type: 'success', text: 'Successfully connected with GitLab via OAuth!' });
+        if (window.history && window.history.replaceState) {
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
+      }
+    }
+  }, []);
+
+  const handleTestJira = async () => {
+    setJiraTesting(true);
+    setJiraTestMessage(null);
+    try {
+      const res = await fetch('/api/profile/jira/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jiraHost: profile.jiraHost,
+          jiraEmail: profile.jiraEmail,
+          jiraApiToken: profile.jiraApiToken,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setJiraTestMessage({ type: 'success', text: data.message });
+      } else {
+        setJiraTestMessage({ type: 'error', text: data.message || 'Jira connection test failed.' });
+      }
+    } catch (e: any) {
+      setJiraTestMessage({ type: 'error', text: e.message || 'Connection error' });
+    } finally {
+      setJiraTesting(false);
+    }
+  };
+
+  const handleSaveJira = async () => {
+    setJiraSaving(true);
+    setJiraTestMessage(null);
+    try {
+      const res = await fetch('/api/profile/jira', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jiraHost: profile.jiraHost,
+          jiraEmail: profile.jiraEmail,
+          jiraApiToken: profile.jiraApiToken,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setProfile(data);
+        setJiraTestMessage({ type: 'success', text: 'Jira connected successfully!' });
+      } else {
+        setJiraTestMessage({ type: 'error', text: data.message || 'Failed to save Jira credentials' });
+      }
+    } catch (e: any) {
+      setJiraTestMessage({ type: 'error', text: e.message || 'Network error' });
+    } finally {
+      setJiraSaving(false);
+    }
+  };
+
+  const handleDisconnectJira = async () => {
+    try {
+      const res = await fetch('/api/profile/jira/disconnect', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        setProfile(data);
+        setJiraTestMessage(null);
+      }
+    } catch (e) {
+      console.error('Failed to disconnect Jira:', e);
+    }
+  };
+
+  const handleConnectGitLabOAuth = async () => {
+    try {
+      const res = await fetch(`/api/profile/gitlab/auth-url?host=${encodeURIComponent(profile.gitlabHost)}&projectId=${encodeURIComponent(profile.gitlabProjectId)}`);
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;
+      }
+    } catch (e) {
+      console.error('Failed to initiate GitLab OAuth flow:', e);
+    }
+  };
+
+  const handleSaveGitLabConfig = async () => {
+    setGitLabSaving(true);
+    setProfileMessage(null);
+    try {
+      const res = await fetch('/api/profile/gitlab/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          gitlabHost: profile.gitlabHost,
+          gitlabProjectId: profile.gitlabProjectId,
+          token: profile.gitlabToken?.includes('••••') ? undefined : profile.gitlabToken,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setProfile(data);
+        setProfileMessage({ type: 'success', text: 'GitLab settings saved successfully!' });
+      } else {
+        setProfileMessage({ type: 'error', text: data.message || 'Failed to save GitLab settings' });
+      }
+    } catch (e: any) {
+      setProfileMessage({ type: 'error', text: e.message || 'Save error' });
+    } finally {
+      setGitLabSaving(false);
+    }
+  };
+
+  const handleDisconnectGitLab = async () => {
+    try {
+      const res = await fetch('/api/profile/gitlab/disconnect', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        setProfile(data);
+      }
+    } catch (e) {
+      console.error('Failed to disconnect GitLab:', e);
+    }
+  };
 
   // Load last synced from localStorage on mount
   useEffect(() => {
@@ -383,6 +577,18 @@ export default function Dashboard() {
               <FileText className="w-4 h-4" />
               Standup Auto-Draft
             </button>
+
+            <button
+              onClick={() => setActiveTab('profile')}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
+                activeTab === 'profile'
+                  ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+              }`}
+            >
+              <User className="w-4 h-4" />
+              Profile & Integrations
+            </button>
           </nav>
         </div>
 
@@ -416,11 +622,13 @@ export default function Dashboard() {
               {activeTab === 'board' && <><LayoutDashboard className="w-6 h-6 text-indigo-400" /> Task Board</>}
               {activeTab === 'activity' && <><Activity className="w-6 h-6 text-indigo-400" /> Contribution Timeline</>}
               {activeTab === 'standup' && <><FileText className="w-6 h-6 text-indigo-400" /> Daily Standup Builder</>}
+              {activeTab === 'profile' && <><User className="w-6 h-6 text-indigo-400" /> Profile & Integrations</>}
             </h2>
             <p className="text-xs text-slate-400 mt-1">
               {activeTab === 'board' && 'Manage your active Jira issues and git contribution mappings.'}
               {activeTab === 'activity' && 'Detailed chronological feed of your commits and merge requests.'}
               {activeTab === 'standup' && 'Auto-generated Slack/Jira template based on code contributions.'}
+              {activeTab === 'profile' && 'Configure and connect Jira and GitLab integrations dynamically.'}
             </p>
           </div>
           
@@ -985,6 +1193,268 @@ export default function Dashboard() {
                       value={standupText}
                       className="w-full h-[380px] bg-slate-950 border border-slate-800 focus:border-indigo-500 text-slate-300 font-mono text-sm p-5 rounded-xl outline-none resize-none leading-relaxed custom-scrollbar shadow-inner"
                     />
+                  </div>
+                )}
+
+                {/* VIEW D: Profile & Integrations View */}
+                {activeTab === 'profile' && (
+                  <div className="space-y-8">
+                    {/* General Profile Banner / Message */}
+                    {profileMessage && (
+                      <div className={`p-4 rounded-xl text-sm font-semibold flex items-center justify-between ${
+                        profileMessage.type === 'success'
+                          ? 'bg-emerald-950/40 border border-emerald-500/30 text-emerald-300'
+                          : 'bg-rose-950/40 border border-rose-500/30 text-rose-300'
+                      }`}>
+                        <span>{profileMessage.text}</span>
+                        <button onClick={() => setProfileMessage(null)} className="text-xs opacity-70 hover:opacity-100">✕</button>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                      {/* CARD 1: Jira Integration */}
+                      <div className="bg-slate-900/30 border border-slate-800/80 rounded-2xl p-6 space-y-6 flex flex-col justify-between">
+                        <div>
+                          {/* Jira Header */}
+                          <div className="flex items-center justify-between border-b border-slate-800/60 pb-4 mb-4">
+                            <div className="flex items-center gap-3">
+                              <div className="p-2.5 bg-blue-500/10 border border-blue-500/20 rounded-xl text-blue-400">
+                                <Layers className="w-5 h-5" />
+                              </div>
+                              <div>
+                                <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                                  Jira Integration
+                                </h3>
+                                <p className="text-xs text-slate-400">Sync issues, QA comments & blocker updates.</p>
+                              </div>
+                            </div>
+
+                            <span className={`text-[10px] uppercase font-bold px-2.5 py-1 rounded-full border ${
+                              profile.jiraConnected
+                                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                                : 'bg-slate-800 text-slate-400 border-slate-700'
+                            }`}>
+                              {profile.jiraConnected ? 'Connected' : 'Not Connected'}
+                            </span>
+                          </div>
+
+                          {/* Jira Form Inputs */}
+                          <div className="space-y-4">
+                            <div>
+                              <label className="block text-xs font-semibold text-slate-300 mb-1">
+                                Jira Host Domain
+                              </label>
+                              <div className="relative">
+                                <Globe className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                                <input
+                                  type="text"
+                                  placeholder="kiework.atlassian.net"
+                                  value={profile.jiraHost}
+                                  onChange={(e) => setProfile({ ...profile, jiraHost: e.target.value })}
+                                  className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 text-slate-200 text-xs pl-9 pr-4 py-2.5 rounded-xl outline-none"
+                                />
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-semibold text-slate-300 mb-1">
+                                Jira Account Email
+                              </label>
+                              <div className="relative">
+                                <User className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                                <input
+                                  type="email"
+                                  placeholder="abhilash@kiebot.com"
+                                  value={profile.jiraEmail}
+                                  onChange={(e) => setProfile({ ...profile, jiraEmail: e.target.value })}
+                                  className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 text-slate-200 text-xs pl-9 pr-4 py-2.5 rounded-xl outline-none"
+                                />
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-semibold text-slate-300 mb-1">
+                                Jira API Token / Key
+                              </label>
+                              <div className="relative">
+                                <Key className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                                <input
+                                  type={showJiraToken ? 'text' : 'password'}
+                                  placeholder={profile.hasJiraToken ? '•••••••• (Token Saved)' : 'Enter Jira API Token'}
+                                  value={profile.jiraApiToken}
+                                  onChange={(e) => setProfile({ ...profile, jiraApiToken: e.target.value })}
+                                  className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 text-slate-200 text-xs pl-9 pr-10 py-2.5 rounded-xl outline-none"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setShowJiraToken(!showJiraToken)}
+                                  className="absolute right-3 top-2.5 text-slate-500 hover:text-slate-300"
+                                >
+                                  {showJiraToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                                </button>
+                              </div>
+                            </div>
+
+                            {jiraTestMessage && (
+                              <div className={`p-3 rounded-xl text-xs font-medium ${
+                                jiraTestMessage.type === 'success'
+                                  ? 'bg-emerald-950/30 border border-emerald-500/20 text-emerald-400'
+                                  : 'bg-rose-950/30 border border-rose-500/20 text-rose-400'
+                              }`}>
+                                {jiraTestMessage.text}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Jira Buttons */}
+                        <div className="pt-4 border-t border-slate-800/60 space-y-3">
+                          <div className="flex items-center gap-3">
+                            <button
+                              type="button"
+                              onClick={handleTestJira}
+                              disabled={jiraTesting}
+                              className="px-4 py-2.5 bg-slate-950 border border-slate-800 hover:border-slate-700 text-slate-300 rounded-xl text-xs font-semibold transition-all"
+                            >
+                              {jiraTesting ? 'Testing...' : 'Test Connection'}
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={handleSaveJira}
+                              disabled={jiraSaving}
+                              className="flex-1 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-indigo-600/20"
+                            >
+                              {jiraSaving ? 'Saving...' : 'Connect Jira'}
+                            </button>
+                          </div>
+
+                          {profile.jiraConnected && (
+                            <button
+                              type="button"
+                              onClick={handleDisconnectJira}
+                              className="w-full px-4 py-2 bg-slate-950 border border-rose-900/40 text-rose-400 hover:bg-rose-950/20 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-1.5"
+                            >
+                              <Unlink className="w-3.5 h-3.5" /> Disconnect Jira
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* CARD 2: GitLab Social Connect */}
+                      <div className="bg-slate-900/30 border border-slate-800/80 rounded-2xl p-6 space-y-6 flex flex-col justify-between">
+                        <div>
+                          {/* GitLab Header */}
+                          <div className="flex items-center justify-between border-b border-slate-800/60 pb-4 mb-4">
+                            <div className="flex items-center gap-3">
+                              <div className="p-2.5 bg-orange-500/10 border border-orange-500/20 rounded-xl text-orange-400">
+                                <GitPullRequest className="w-5 h-5" />
+                              </div>
+                              <div>
+                                <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                                  GitLab Social Connect
+                                </h3>
+                                <p className="text-xs text-slate-400">Connect via OAuth to track commits & merge requests.</p>
+                              </div>
+                            </div>
+
+                            <span className={`text-[10px] uppercase font-bold px-2.5 py-1 rounded-full border ${
+                              profile.gitlabConnected
+                                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                                : 'bg-slate-800 text-slate-400 border-slate-700'
+                            }`}>
+                              {profile.gitlabConnected ? 'Connected' : 'Not Connected'}
+                            </span>
+                          </div>
+
+                          {/* GitLab Info / Social Connect Status */}
+                          <div className="space-y-4">
+                            <div>
+                              <label className="block text-xs font-semibold text-slate-300 mb-1">
+                                GitLab Host Instance
+                              </label>
+                              <div className="relative">
+                                <Globe className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                                <input
+                                  type="text"
+                                  placeholder="git.kiebot.com"
+                                  value={profile.gitlabHost}
+                                  onChange={(e) => setProfile({ ...profile, gitlabHost: e.target.value })}
+                                  className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 text-slate-200 text-xs pl-9 pr-4 py-2.5 rounded-xl outline-none"
+                                />
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-semibold text-slate-300 mb-1">
+                                GitLab Project ID
+                              </label>
+                              <input
+                                type="text"
+                                placeholder="e.g. 131"
+                                value={profile.gitlabProjectId}
+                                onChange={(e) => setProfile({ ...profile, gitlabProjectId: e.target.value })}
+                                className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 text-slate-200 text-xs px-3 py-2.5 rounded-xl outline-none"
+                              />
+                            </div>
+
+                            {/* Connected User Badge */}
+                            {profile.gitlabConnected && (
+                              <div className="p-4 bg-emerald-950/20 border border-emerald-500/20 rounded-xl space-y-1">
+                                <div className="flex items-center gap-2 text-emerald-400 font-bold text-xs">
+                                  <ShieldCheck className="w-4 h-4" />
+                                  <span>GitLab Account Connected</span>
+                                </div>
+                                {profile.gitlabUsername && (
+                                  <p className="text-xs text-slate-300 pl-6">
+                                    Username: <span className="font-mono text-cyan-400 font-bold">@{profile.gitlabUsername}</span>
+                                  </p>
+                                )}
+                                {profile.workEmail && (
+                                  <p className="text-xs text-slate-300 pl-6">
+                                    Work Email: <span className="font-mono text-slate-400">{profile.workEmail}</span>
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* GitLab Social Connect Action Buttons */}
+                        <div className="pt-4 border-t border-slate-800/60 space-y-3">
+                          <button
+                            type="button"
+                            onClick={handleConnectGitLabOAuth}
+                            className="w-full px-4 py-3 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-orange-600/20 flex items-center justify-center gap-2"
+                          >
+                            <GitPullRequest className="w-4 h-4" />
+                            {profile.gitlabConnected ? 'Re-Connect with GitLab' : 'Connect with GitLab'}
+                          </button>
+
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={handleSaveGitLabConfig}
+                              disabled={gitlabSaving}
+                              className="flex-1 px-4 py-2 bg-slate-950 border border-slate-800 hover:border-slate-700 text-slate-300 rounded-xl text-xs font-semibold transition-all"
+                            >
+                              {gitlabSaving ? 'Saving...' : 'Save Settings'}
+                            </button>
+
+                            {profile.gitlabConnected && (
+                              <button
+                                type="button"
+                                onClick={handleDisconnectGitLab}
+                                className="px-4 py-2 bg-slate-950 border border-rose-900/40 text-rose-400 hover:bg-rose-950/20 rounded-xl text-xs font-semibold transition-all"
+                              >
+                                Disconnect
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                    </div>
                   </div>
                 )}
 
